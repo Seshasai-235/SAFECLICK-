@@ -1,0 +1,322 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: SafeClick - Cloud-Native LLM-Based Phishing Website Detection System
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 256
+    Runtime: nodejs20.x
+    Environment:
+      Variables:
+        ARTIFACTS_BUCKET: !Ref ArtifactsBucket
+        RESULTS_TABLE: !Ref ResultsTable
+        LOG_LEVEL: INFO
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: Environment name
+
+Resources:
+  # API Gateway
+  SafeClickApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref Environment
+      Cors:
+        AllowOrigin: "'*'"
+        AllowMethods: "'POST,OPTIONS,GET'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'"
+      MethodSettings:
+        - ResourcePath: "/*"
+          HttpMethod: "*"
+          ThrottlingRateLimit: 100
+          ThrottlingBurstLimit: 200
+      TracingEnabled: true
+
+  # API Handler Lambda
+  ApiHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/api-handler/
+      Handler: index.handler
+      Description: API entry point for URL submissions
+      Environment:
+        Variables:
+          CRAWLER_FUNCTION_NAME: !Ref WebCrawlerFunction
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref WebCrawlerFunction
+        - CloudWatchPutMetricPolicy: {}
+      Events:
+        AnalyzeUrl:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafeClickApi
+            Path: /analyze
+            Method: POST
+
+  # Web Crawler Lambda
+  WebCrawlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/web-crawler/
+      Handler: index.handler
+      Runtime: nodejs20.x
+      MemorySize: 2048
+      Timeout: 60
+      EphemeralStorage:
+        Size: 2048
+      Description: Captures website content using headless Chrome
+      Environment:
+        Variables:
+          ARTIFACTS_BUCKET: !Ref ArtifactsBucket
+          ANALYZER_FUNCTION_NAME: !Ref AnalyzerFunction
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref ArtifactsBucket
+        - LambdaInvokePolicy:
+            FunctionName: !Ref AnalyzerFunction
+        - CloudWatchPutMetricPolicy: {}
+
+  # Analyzer Lambda
+  AnalyzerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/analyzer/
+      Handler: lambda_function.handler
+      Runtime: python3.10
+      MemorySize: 1024
+      Timeout: 120
+      Description: Analyzes content using Amazon Bedrock Claude 3.5 Sonnet
+      Environment:
+        Variables:
+          ARTIFACTS_BUCKET: !Ref ArtifactsBucket
+          RESULTS_HANDLER_FUNCTION: !Ref ResultsHandlerFunction
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref ArtifactsBucket
+        - Statement:
+          - Effect: Allow
+            Action: bedrock:InvokeModel
+            Resource:
+              - 'arn:aws:bedrock:*::foundation-model/amazon.nova-*'
+              - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-sonnet-*'
+              - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*'
+        - Statement:
+          - Effect: Allow
+            Action:
+              - rekognition:DetectLabels
+              - rekognition:DetectText
+              - rekognition:DetectFaces
+            Resource: '*'
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ResultsHandlerFunction
+        - CloudWatchPutMetricPolicy: {}
+
+  # Results Handler Lambda
+  ResultsHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/results-handler/
+      Handler: lambda_function.handler
+      Runtime: python3.10
+      MemorySize: 512
+      Timeout: 30
+      Description: Stores analysis results in DynamoDB
+      Environment:
+        Variables:
+          RESULTS_TABLE: !Ref ResultsTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ResultsTable
+        - CloudWatchPutMetricPolicy: {}
+      Events:
+        QueryResults:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafeClickApi
+            Path: /results
+            Method: GET
+
+  # S3 Bucket for Artifacts
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'safeclick-artifacts-${AWS::AccountId}-${Environment}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldScans
+            Status: Enabled
+            Prefix: scans/
+            ExpirationInDays: 7
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Suspended
+
+  # S3 Bucket Policy - Enforce HTTPS
+  ArtifactsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ArtifactsBucket
+      PolicyDocument:
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt ArtifactsBucket.Arn
+              - !Sub '${ArtifactsBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': false
+
+  # DynamoDB Table for Results
+  ResultsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'safeclick-results-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: url
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+        - AttributeName: verdict
+          AttributeType: S
+        - AttributeName: scanId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: url
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: verdict-timestamp-index
+          KeySchema:
+            - AttributeName: verdict
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: scanId-index
+          KeySchema:
+            - AttributeName: scanId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        Enabled: false
+        AttributeName: ttl
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # CloudWatch Log Groups
+  ApiHandlerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ApiHandlerFunction}'
+      RetentionInDays: 30
+
+  WebCrawlerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${WebCrawlerFunction}'
+      RetentionInDays: 30
+
+  AnalyzerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AnalyzerFunction}'
+      RetentionInDays: 30
+
+  ResultsHandlerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ResultsHandlerFunction}'
+      RetentionInDays: 30
+
+  # CloudWatch Alarms
+  ApiHandlerErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'SafeClick-${Environment}-ApiHandler-Errors'
+      AlarmDescription: Alert when API Handler error rate exceeds 5%
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApiHandlerFunction
+
+  CrawlerTimeoutAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'SafeClick-${Environment}-Crawler-Timeouts'
+      AlarmDescription: Alert when Crawler timeout rate exceeds 2%
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 55000
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref WebCrawlerFunction
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${SafeClickApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/analyze'
+    Export:
+      Name: !Sub 'SafeClick-${Environment}-ApiEndpoint'
+
+  ArtifactsBucketName:
+    Description: S3 bucket for storing artifacts
+    Value: !Ref ArtifactsBucket
+    Export:
+      Name: !Sub 'SafeClick-${Environment}-ArtifactsBucket'
+
+  ResultsTableName:
+    Description: DynamoDB table for storing results
+    Value: !Ref ResultsTable
+    Export:
+      Name: !Sub 'SafeClick-${Environment}-ResultsTable'
+
+  ApiHandlerFunctionArn:
+    Description: API Handler Lambda ARN
+    Value: !GetAtt ApiHandlerFunction.Arn
+
+  WebCrawlerFunctionArn:
+    Description: Web Crawler Lambda ARN
+    Value: !GetAtt WebCrawlerFunction.Arn
+
+  AnalyzerFunctionArn:
+    Description: Analyzer Lambda ARN
+    Value: !GetAtt AnalyzerFunction.Arn
+
+  ResultsHandlerFunctionArn:
+    Description: Results Handler Lambda ARN
+    Value: !GetAtt ResultsHandlerFunction.Arn

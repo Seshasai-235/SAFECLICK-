@@ -1,0 +1,95 @@
+# SAM
+.aws-sam/
+samconfig.toml.bak
+
+# Kiro
+.kiro/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Next.js build
+.next/
+out/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing
+.coverage
+.pytest_cache/
+coverage/
+*.cover
+.hypothesis/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# AWS
+.aws/
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+src/analyzer/boto*
+src/analyzer/bs4/
+src/analyzer/dateutil/
+src/analyzer/jmespath/
+src/analyzer/lxml/
+src/analyzer/soupsieve/
+src/analyzer/s3transfer/
+src/analyzer/urllib3/
+src/analyzer/six.py
+src/analyzer/bin/
+src/analyzer/*dist-info/
+src/results-handler/boto*
+src/results-handler/dateutil/
+src/results-handler/jmespath/
+src/results-handler/s3transfer/
+src/results-handler/urllib3/
+src/results-handler/six.py
+src/results-handler/bin/
+src/results-handler/*dist-info/

@@ -1,0 +1,12 @@
+{
+  "body": "{\"url\": \"https://www.example.com\"}",
+  "httpMethod": "POST",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "requestContext": {
+    "identity": {
+      "sourceIp": "127.0.0.1"
+    }
+  }
+}

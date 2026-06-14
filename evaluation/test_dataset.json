@@ -1,0 +1,50 @@
+{
+  "description": "Test dataset for SafeClick phishing detection evaluation",
+  "total_samples": 1000,
+  "phishing_samples": 500,
+  "legitimate_samples": 500,
+  "sources": [
+    "PhishTank (verified phishing URLs)",
+    "OpenPhish (active phishing URLs)",
+    "Alexa Top Sites (legitimate URLs)",
+    "Manual collection (verified legitimate sites)"
+  ],
+  "samples": [
+    {
+      "id": 1,
+      "url": "https://www.google.com",
+      "ground_truth": "Legitimate",
+      "category": "Search Engine",
+      "source": "Alexa Top Sites"
+    },
+    {
+      "id": 2,
+      "url": "https://www.microsoft.com",
+      "ground_truth": "Legitimate",
+      "category": "Technology",
+      "source": "Alexa Top Sites"
+    },
+    {
+      "id": 3,
+      "url": "https://www.amazon.com",
+      "ground_truth": "Legitimate",
+      "category": "E-commerce",
+      "source": "Alexa Top Sites"
+    },
+    {
+      "id": 4,
+      "url": "https://www.paypal.com",
+      "ground_truth": "Legitimate",
+      "category": "Financial",
+      "source": "Verified Financial Institution"
+    },
+    {
+      "id": 5,
+      "url": "https://www.netflix.com",
+      "ground_truth": "Legitimate",
+      "category": "Streaming",
+      "source": "Alexa Top Sites"
+    }
+  ],
+  "note": "This is a sample structure. You need to populate with 1000 URLs (500 phishing + 500 legitimate) from real sources like PhishTank, OpenPhish, and verified legitimate sites."
+}
